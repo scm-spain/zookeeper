@@ -40,6 +40,9 @@ public final class StaticHostProvider implements HostProvider {
 
     private final List<InetSocketAddress> serverAddresses = new ArrayList<InetSocketAddress>(
             5);
+    
+    private final List<InetSocketAddress> originalServerAddresses = new ArrayList<InetSocketAddress>(
+            5);
 
     private int lastIndex = -1;
 
@@ -56,35 +59,58 @@ public final class StaticHostProvider implements HostProvider {
      */
     public StaticHostProvider(Collection<InetSocketAddress> serverAddresses)
             throws UnknownHostException {
-        for (InetSocketAddress address : serverAddresses) {
-            InetAddress ia = address.getAddress();
-            InetAddress resolvedAddresses[] = InetAddress.getAllByName((ia!=null) ? ia.getHostAddress():
-                address.getHostName());
-            for (InetAddress resolvedAddress : resolvedAddresses) {
-                // If hostName is null but the address is not, we can tell that
-                // the hostName is an literal IP address. Then we can set the host string as the hostname
-                // safely to avoid reverse DNS lookup.
-                // As far as i know, the only way to check if the hostName is null is use toString().
-                // Both the two implementations of InetAddress are final class, so we can trust the return value of
-                // the toString() method.
-                if (resolvedAddress.toString().startsWith("/") 
-                        && resolvedAddress.getAddress() != null) {
-                    this.serverAddresses.add(
-                            new InetSocketAddress(InetAddress.getByAddress(
-                                    address.getHostName(),
-                                    resolvedAddress.getAddress()), 
-                                    address.getPort()));
-                } else {
-                    this.serverAddresses.add(new InetSocketAddress(resolvedAddress.getHostAddress(), address.getPort()));
-                }  
-            }
-        }
-        
-        if (this.serverAddresses.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "A HostProvider may not be empty!");
-        }
-        Collections.shuffle(this.serverAddresses);
+    	
+    	this.originalServerAddresses.addAll(serverAddresses);
+    	
+    	calculateServerAddresss(serverAddresses);
+       
+    }
+    
+    private void calculateServerAddresss(Collection<InetSocketAddress> serverAddresses) throws UnknownHostException{
+    	List<InetSocketAddress>  tmpServers = new ArrayList<InetSocketAddress>(5);
+    	
+    	 for (InetSocketAddress address : serverAddresses) {
+             InetAddress ia = address.getAddress();
+             InetAddress resolvedAddresses[] = InetAddress.getAllByName((ia!=null) ? ia.getHostAddress():
+                 address.getHostName());     
+             
+             for (InetAddress resolvedAddress : resolvedAddresses) {
+                 // If hostName is null but the address is not, we can tell that
+                 // the hostName is an literal IP address. Then we can set the host string as the hostname
+                 // safely to avoid reverse DNS lookup.
+                 // As far as i know, the only way to check if the hostName is null is use toString().
+                 // Both the two implementations of InetAddress are final class, so we can trust the return value of
+                 // the toString() method.
+                 if (resolvedAddress.toString().startsWith("/") 
+                         && resolvedAddress.getAddress() != null) {
+                     tmpServers.add(
+                             new InetSocketAddress(InetAddress.getByAddress(
+                                     address.getHostName(),
+                                     resolvedAddress.getAddress()), 
+                                     address.getPort()));
+                 } else {
+                     tmpServers.add(new InetSocketAddress(resolvedAddress.getHostAddress(), address.getPort()));
+                 }  
+             }
+         }
+         
+         if (tmpServers.isEmpty()) {
+             throw new IllegalArgumentException(
+                     "A HostProvider may not be empty!");
+         } else {
+        	 if (!serverAddresses.isEmpty()) {
+        		 this.serverAddresses.clear();
+        	 }
+        	 this.serverAddresses.addAll(tmpServers);
+         }
+         
+         Collections.shuffle(this.serverAddresses);
+    }
+    
+    public synchronized void  recalculateHosts() throws UnknownHostException {
+    	LOG.info("Recalculating the provided hosts. Hosts:" + this.originalServerAddresses);
+    	calculateServerAddresss(originalServerAddresses);
+    	LOG.info("New server Adresses: " + this.serverAddresses);
     }
 
     public int size() {
@@ -93,9 +119,10 @@ public final class StaticHostProvider implements HostProvider {
 
     public InetSocketAddress next(long spinDelay) {
         ++currentIndex;
-        if (currentIndex == serverAddresses.size()) {
+        if (currentIndex >= serverAddresses.size()) {
             currentIndex = 0;
-        }
+        } 
+        
         if (currentIndex == lastIndex && spinDelay > 0) {
             try {
                 Thread.sleep(spinDelay);

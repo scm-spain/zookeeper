@@ -27,6 +27,7 @@ import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.List;
@@ -55,6 +56,7 @@ import org.apache.zookeeper.ZooDefs.OpCode;
 import org.apache.zookeeper.ZooKeeper.States;
 import org.apache.zookeeper.ZooKeeper.WatchRegistration;
 import org.apache.zookeeper.client.HostProvider;
+import org.apache.zookeeper.client.StaticHostProvider;
 import org.apache.zookeeper.client.ZooKeeperSaslClient;
 import org.apache.zookeeper.proto.AuthPacket;
 import org.apache.zookeeper.proto.ConnectRequest;
@@ -385,6 +387,10 @@ public class ClientCnxn {
         sendThread = new SendThread(clientCnxnSocket);
         eventThread = new EventThread();
 
+    }
+    
+    public void recalculateHostProvider() throws UnknownHostException {
+    	((StaticHostProvider)this.hostProvider).recalculateHosts();
     }
 
     /**
@@ -1000,7 +1006,12 @@ public class ClientCnxn {
                         if (closing || !state.isAlive()) {
                             break;
                         }
-                        startConnect();
+                        try {
+                        	startConnect();
+                        } catch (Throwable e) {
+                        	ClientCnxn.this.recalculateHostProvider();
+                        	startConnect();
+                        }
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
 
@@ -1073,12 +1084,21 @@ public class ClientCnxn {
                             idlePingRwServer = 0;
                             pingRwTimeout =
                                 Math.min(2*pingRwTimeout, maxPingRwTimeout);
-                            pingRwServer();
+                            try { 
+                            	pingRwServer();
+                            } catch (Throwable e) {
+                            	ClientCnxn.this.recalculateHostProvider();
+                            	pingRwServer();
+                            }
                         }
                         to = Math.min(to, pingRwTimeout - idlePingRwServer);
                     }
-
-                    clientCnxnSocket.doTransport(to, pendingQueue, outgoingQueue, ClientCnxn.this);
+                    try {
+                    	clientCnxnSocket.doTransport(to, pendingQueue, outgoingQueue, ClientCnxn.this);
+                    } catch (Throwable e) {
+                    	ClientCnxn.this.recalculateHostProvider();
+                    	clientCnxnSocket.doTransport(to, pendingQueue, outgoingQueue, ClientCnxn.this);
+                    }
                 } catch (Throwable e) {
                     if (closing) {
                         if (LOG.isDebugEnabled()) {
